@@ -3,14 +3,11 @@ package com.mirrortv.app
 
 import android.app.Activity
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.graphics.Color
 import android.view.Gravity
-import android.widget.LinearLayout
-import android.widget.TextView
-import android.widget.Button
-import android.widget.ScrollView
+import android.view.ViewGroup
+import android.widget.*
+import android.app.AlertDialog
 import android.net.wifi.WifiManager
 import java.net.DatagramSocket
 import java.net.DatagramPacket
@@ -19,7 +16,11 @@ import java.net.SocketTimeoutException
 
 class MainActivity : Activity() {
 
-    private val handler = Handler(Looper.getMainLooper())
+    private lateinit var status: TextView
+    private lateinit var results: TextView
+    private lateinit var searchButton: Button
+
+    private val devices = LinkedHashSet<String>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -27,8 +28,8 @@ class MainActivity : Activity() {
         val layout = LinearLayout(this)
         layout.orientation = LinearLayout.VERTICAL
         layout.gravity = Gravity.CENTER
-        layout.setPadding(30, 30, 30, 30)
-        layout.setBackgroundColor(Color.rgb(12, 25, 48))
+        layout.setPadding(28, 35, 28, 35)
+        layout.setBackgroundColor(Color.rgb(12, 35, 60))
 
         val title = TextView(this)
         title.text = "Mirror TV"
@@ -37,21 +38,27 @@ class MainActivity : Activity() {
         title.gravity = Gravity.CENTER
 
         val subtitle = TextView(this)
-        subtitle.text = "البحث عن أجهزة التلفزيون والريسيفرات"
+        subtitle.text = "عكس شاشة الهاتف على التلفاز"
         subtitle.textSize = 18f
         subtitle.setTextColor(Color.LTGRAY)
         subtitle.gravity = Gravity.CENTER
 
-        val searchButton = Button(this)
-        searchButton.text = "البحث عن الأجهزة"
+        searchButton = Button(this)
+        searchButton.text = "البحث عن التلفاز"
 
-        val status = TextView(this)
-        status.text = "اضغط للبحث عن الأجهزة المتصلة بالشبكة"
-        status.textSize = 16f
+        val manualButton = Button(this)
+        manualButton.text = "إضافة جهاز يدوياً"
+
+        val mirrorButton = Button(this)
+        mirrorButton.text = "بدء عكس الشاشة"
+
+        status = TextView(this)
+        status.text = "اختر طريقة الاتصال بالتلفاز"
+        status.textSize = 17f
         status.setTextColor(Color.WHITE)
         status.gravity = Gravity.CENTER
 
-        val results = TextView(this)
+        results = TextView(this)
         results.textSize = 15f
         results.setTextColor(Color.WHITE)
         results.gravity = Gravity.CENTER
@@ -61,68 +68,115 @@ class MainActivity : Activity() {
 
         searchButton.setOnClickListener {
             searchButton.isEnabled = false
-            status.text = "جارٍ البحث عن الأجهزة..."
+            status.text = "جارٍ البحث..."
             results.text = ""
 
             Thread {
-                val result = discoverDevices()
+                val found = discoverDevices()
 
-                handler.post {
+                runOnUiThread {
                     searchButton.isEnabled = true
 
-                    if (result.error != null) {
-                        status.text = "حدث خطأ أثناء البحث"
-                        results.text = result.error
-                    } else if (result.devices.isEmpty()) {
+                    if (found.isEmpty()) {
                         status.text = "لم يتم العثور على أجهزة DLNA"
-                        results.text =
-                            "تأكد من اتصال الهاتف والتلفاز بنفس شبكة Wi-Fi"
                     } else {
-                        status.text =
-                            "تم العثور على ${result.devices.size} جهاز"
-
-                        results.text = result.devices.joinToString(
-                            separator = "\n\n"
-                        )
+                        status.text = "الأجهزة التي تم العثور عليها:"
+                        results.text = found.joinToString("\n\n")
                     }
                 }
             }.start()
         }
 
+        manualButton.setOnClickListener {
+            val input = EditText(this)
+            input.hint = "مثال: 192.168.1.100"
+            input.inputType =  android.text.InputType.TYPE_CLASS_TEXT
+
+            AlertDialog.Builder(this)
+                .setTitle("إضافة جهاز يدوياً")
+                .setMessage("أدخل عنوان IP للتلفاز")
+                .setView(input)
+                .setPositiveButton("إضافة") { _, _ ->
+                    val ip = input.text.toString().trim()
+
+                    if (isValidIp(ip)) {
+                        status.text = "تمت إضافة العنوان"
+                        results.text = "عنوان الجهاز: $ip\nلم يتم الاتصال به بعد."
+                    } else {
+                        status.text = "عنوان IP غير صحيح"
+                    }
+                }
+                .setNegativeButton("إلغاء", null)
+                .show()
+        }
+
+        mirrorButton.setOnClickListener {
+            AlertDialog.Builder(this)
+                .setTitle("عكس الشاشة")
+                .setMessage(
+                    "سنضيف تشغيل عكس الشاشة بعد تجهيز الاتصال بجهاز استقبال متوافق."
+                )
+                .setPositiveButton("حسناً", null)
+                .show()
+        }
+
         layout.addView(title)
         layout.addView(subtitle)
+
+        addSpace(layout, 30)
+
         layout.addView(searchButton)
+        layout.addView(manualButton)
+        layout.addView(mirrorButton)
+
+        addSpace(layout, 20)
+
         layout.addView(status)
         layout.addView(scroll)
 
         setContentView(layout)
     }
 
-    private data class SearchResult(
-        val devices: List<String>,
-        val error: String? = null
-    )
+    private fun addSpace(layout: LinearLayout, height: Int) {
+        val space = TextView(this)
+        layout.addView(
+            space,
+            LinearLayout.LayoutParams(
+                1,
+                height
+            )
+        )
+    }
 
-    private fun discoverDevices(): SearchResult {
-        val devices = LinkedHashSet<String>()
+    private fun isValidIp(ip: String): Boolean {
+        val parts = ip.split(".")
 
-        var lock: WifiManager.MulticastLock? = null
+        if (parts.size != 4) return false
+
+        return parts.all {
+            val number = it.toIntOrNull()
+            number != null && number in 0..255
+        }
+    }
+
+    private fun discoverDevices(): List<String> {
+        val found = LinkedHashSet<String>()
+
+        val wifi = applicationContext
+            .getSystemService(WIFI_SERVICE) as WifiManager
+
+        val lock = wifi.createMulticastLock("MirrorTVLock")
+        lock.setReferenceCounted(false)
+
         var socket: DatagramSocket? = null
 
         try {
-            val wifi = applicationContext
-                .getSystemService(WIFI_SERVICE) as WifiManager
-
-            lock = wifi.createMulticastLock("MirrorTVLock")
-            lock.setReferenceCounted(false)
             lock.acquire()
 
             socket = DatagramSocket()
             socket.soTimeout = 700
 
-            val address = InetAddress.getByName(
-                "239.255.255.250"
-            )
+            val address = InetAddress.getByName("239.255.255.250")
 
             val message =
                 "M-SEARCH * HTTP/1.1\r\n" +
@@ -133,25 +187,21 @@ class MainActivity : Activity() {
 
             val data = message.toByteArray()
 
-            val packet = DatagramPacket(
-                data,
-                data.size,
-                address,
-                1900
+            socket.send(
+                DatagramPacket(
+                    data,
+                    data.size,
+                    address,
+                    1900
+                )
             )
-
-            socket.send(packet)
 
             val endTime = System.currentTimeMillis() + 6000
 
             while (System.currentTimeMillis() < endTime) {
                 try {
                     val buffer = ByteArray(4096)
-
-                    val response = DatagramPacket(
-                        buffer,
-                        buffer.size
-                    )
+                    val response = DatagramPacket(buffer, buffer.size)
 
                     socket.receive(response)
 
@@ -164,10 +214,7 @@ class MainActivity : Activity() {
                     val location = text
                         .lineSequence()
                         .firstOrNull {
-                            it.startsWith(
-                                "LOCATION:",
-                                ignoreCase = true
-                            )
+                            it.startsWith("LOCATION:", true)
                         }
                         ?.substringAfter(":")
                         ?.trim()
@@ -175,40 +222,30 @@ class MainActivity : Activity() {
                     val server = text
                         .lineSequence()
                         .firstOrNull {
-                            it.startsWith(
-                                "SERVER:",
-                                ignoreCase = true
-                            )
+                            it.startsWith("SERVER:", true)
                         }
                         ?.substringAfter(":")
                         ?.trim()
 
                     if (location != null) {
-                        devices.add(
-                            "الجهاز: ${server ?: "DLNA"}\n" +
-                            "العنوان: $location"
+                        found.add(
+                            "الجهاز: ${server ?: "DLNA"}\nالعنوان: $location"
                         )
                     }
 
                 } catch (_: SocketTimeoutException) {
-                    // Continue searching
+                    // استمرار البحث
                 }
             }
 
-            return SearchResult(devices.toList())
-
-        } catch (e: Exception) {
-            return SearchResult(
-                devices.toList(),
-                e.message ?: "خطأ غير معروف"
-            )
-
+        } catch (_: Exception) {
+            // فشل البحث
         } finally {
             socket?.close()
-
-            if (lock?.isHeld == true) {
-                lock.release()
-            }
+            if (lock.isHeld) lock.release()
         }
+
+        return found.toList()
     }
 }
+١
