@@ -248,4 +248,3 @@ class MainActivity : Activity() {
         return found.toList()
     }
 }
-١
