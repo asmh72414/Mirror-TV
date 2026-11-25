@@ -52,7 +52,7 @@ class MainActivity : Activity() {
         status.gravity = Gravity.CENTER
 
         val results = TextView(this)
-        results.textSize = 16f
+        results.textSize = 15f
         results.setTextColor(Color.WHITE)
         results.gravity = Gravity.CENTER
 
@@ -65,17 +65,23 @@ class MainActivity : Activity() {
             results.text = ""
 
             Thread {
-                val devices = discoverDevices()
+                val result = discoverDevices()
 
                 handler.post {
                     searchButton.isEnabled = true
 
-                    if (devices.isEmpty()) {
+                    if (result.error != null) {
+                        status.text = "حدث خطأ أثناء البحث"
+                        results.text = result.error
+                    } else if (result.devices.isEmpty()) {
                         status.text = "لم يتم العثور على أجهزة DLNA"
+                        results.text =
+                            "تأكد من اتصال الهاتف والتلفاز بنفس شبكة Wi-Fi"
                     } else {
-                        status.text = "تم العثور على ${devices.size} جهاز"
+                        status.text =
+                            "تم العثور على ${result.devices.size} جهاز"
 
-                        results.text = devices.joinToString(
+                        results.text = result.devices.joinToString(
                             separator = "\n\n"
                         )
                     }
@@ -92,32 +98,38 @@ class MainActivity : Activity() {
         setContentView(layout)
     }
 
-    private fun discoverDevices(): List<String> {
+    private data class SearchResult(
+        val devices: List<String>,
+        val error: String? = null
+    )
+
+    private fun discoverDevices(): SearchResult {
         val devices = LinkedHashSet<String>()
 
-        val wifi = applicationContext
-            .getSystemService(WIFI_SERVICE) as WifiManager
-
-        val lock = wifi.createMulticastLock("MirrorTVLock")
-        lock.setReferenceCounted(false)
-
+        var lock: WifiManager.MulticastLock? = null
         var socket: DatagramSocket? = null
 
         try {
+            val wifi = applicationContext
+                .getSystemService(WIFI_SERVICE) as WifiManager
+
+            lock = wifi.createMulticastLock("MirrorTVLock")
+            lock.setReferenceCounted(false)
             lock.acquire()
 
             socket = DatagramSocket()
             socket.soTimeout = 700
 
-            val address = InetAddress.getByName("239.255.255.250")
+            val address = InetAddress.getByName(
+                "239.255.255.250"
+            )
 
-            val message = (
+            val message =
                 "M-SEARCH * HTTP/1.1\r\n" +
                 "HOST: 239.255.255.250:1900\r\n" +
                 "MAN: \"ssdp:discover\"\r\n" +
                 "MX: 3\r\n" +
                 "ST: ssdp:all\r\n\r\n"
-            )
 
             val data = message.toByteArray()
 
@@ -135,6 +147,7 @@ class MainActivity : Activity() {
             while (System.currentTimeMillis() < endTime) {
                 try {
                     val buffer = ByteArray(4096)
+
                     val response = DatagramPacket(
                         buffer,
                         buffer.size
@@ -172,7 +185,8 @@ class MainActivity : Activity() {
 
                     if (location != null) {
                         devices.add(
-                            "الجهاز: ${server ?: "DLNA"}\nالعنوان: $location"
+                            "الجهاز: ${server ?: "DLNA"}\n" +
+                            "العنوان: $location"
                         )
                     }
 
@@ -181,16 +195,20 @@ class MainActivity : Activity() {
                 }
             }
 
-        } catch (_: Exception) {
-            // Search failed
+            return SearchResult(devices.toList())
+
+        } catch (e: Exception) {
+            return SearchResult(
+                devices.toList(),
+                e.message ?: "خطأ غير معروف"
+            )
+
         } finally {
             socket?.close()
 
-            if (lock.isHeld) {
+            if (lock?.isHeld == true) {
                 lock.release()
             }
         }
-
-        return devices.toList()
     }
 }
