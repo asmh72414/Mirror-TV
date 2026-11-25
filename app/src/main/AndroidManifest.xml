@@ -8,7 +8,6 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
     <application
-        android:allowBackup="false"
         android:label="Mirror TV"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
@@ -22,5 +21,6 @@
             </intent-filter>
 
         </activity>
+
     </application>
 </manifest>
