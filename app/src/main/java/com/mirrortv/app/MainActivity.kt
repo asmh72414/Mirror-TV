@@ -5,7 +5,6 @@ import android.app.Activity
 import android.os.Bundle
 import android.graphics.Color
 import android.view.Gravity
-import android.view.ViewGroup
 import android.widget.*
 import android.app.AlertDialog
 import android.net.wifi.WifiManager
@@ -19,8 +18,6 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var results: TextView
     private lateinit var searchButton: Button
-
-    private val devices = LinkedHashSet<String>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -68,7 +65,7 @@ class MainActivity : Activity() {
 
         searchButton.setOnClickListener {
             searchButton.isEnabled = false
-            status.text = "جارٍ البحث..."
+            status.text = "جارٍ البحث عن أجهزة DLNA..."
             results.text = ""
 
             Thread {
@@ -90,7 +87,6 @@ class MainActivity : Activity() {
         manualButton.setOnClickListener {
             val input = EditText(this)
             input.hint = "مثال: 192.168.1.100"
-            input.inputType =  android.text.InputType.TYPE_CLASS_TEXT
 
             AlertDialog.Builder(this)
                 .setTitle("إضافة جهاز يدوياً")
@@ -101,7 +97,8 @@ class MainActivity : Activity() {
 
                     if (isValidIp(ip)) {
                         status.text = "تمت إضافة العنوان"
-                        results.text = "عنوان الجهاز: $ip\nلم يتم الاتصال به بعد."
+                        results.text =
+                            "عنوان الجهاز: $ip\nلم يتم الاتصال به بعد."
                     } else {
                         status.text = "عنوان IP غير صحيح"
                     }
@@ -114,7 +111,7 @@ class MainActivity : Activity() {
             AlertDialog.Builder(this)
                 .setTitle("عكس الشاشة")
                 .setMessage(
-                    "سنضيف تشغيل عكس الشاشة بعد تجهيز الاتصال بجهاز استقبال متوافق."
+                    "عكس الشاشة يحتاج إلى جهاز استقبال متوافق."
                 )
                 .setPositiveButton("حسناً", null)
                 .show()
@@ -122,15 +119,11 @@ class MainActivity : Activity() {
 
         layout.addView(title)
         layout.addView(subtitle)
-
         addSpace(layout, 30)
-
         layout.addView(searchButton)
         layout.addView(manualButton)
         layout.addView(mirrorButton)
-
         addSpace(layout, 20)
-
         layout.addView(status)
         layout.addView(scroll)
 
@@ -141,16 +134,12 @@ class MainActivity : Activity() {
         val space = TextView(this)
         layout.addView(
             space,
-            LinearLayout.LayoutParams(
-                1,
-                height
-            )
+            LinearLayout.LayoutParams(1, height)
         )
     }
 
     private fun isValidIp(ip: String): Boolean {
         val parts = ip.split(".")
-
         if (parts.size != 4) return false
 
         return parts.all {
@@ -160,7 +149,7 @@ class MainActivity : Activity() {
     }
 
     private fun discoverDevices(): List<String> {
-        val found = LinkedHashSet<String>()
+        val found = LinkedHashMap<String, String>()
 
         val wifi = applicationContext
             .getSystemService(WIFI_SERVICE) as WifiManager
@@ -174,34 +163,47 @@ class MainActivity : Activity() {
             lock.acquire()
 
             socket = DatagramSocket()
-            socket.soTimeout = 700
+            socket.soTimeout = 500
 
-            val address = InetAddress.getByName("239.255.255.250")
+            val address =
+                InetAddress.getByName("239.255.255.250")
 
-            val message =
-                "M-SEARCH * HTTP/1.1\r\n" +
-                "HOST: 239.255.255.250:1900\r\n" +
-                "MAN: \"ssdp:discover\"\r\n" +
-                "MX: 3\r\n" +
-                "ST: ssdp:all\r\n\r\n"
+            val targets = listOf(
+                "ssdp:all",
+                "upnp:rootdevice",
+                "urn:schemas-upnp-org:device:MediaRenderer:1"
+            )
 
-            val data = message.toByteArray()
+            for (target in targets) {
+                val message =
+                    "M-SEARCH * HTTP/1.1\r\n" +
+                    "HOST: 239.255.255.250:1900\r\n" +
+                    "MAN: \"ssdp:discover\"\r\n" +
+                    "MX: 2\r\n" +
+                    "ST: $target\r\n\r\n"
 
-            socket.send(
-                DatagramPacket(
+                val data = message.toByteArray()
+
+                val packet = DatagramPacket(
                     data,
                     data.size,
                     address,
                     1900
                 )
-            )
 
-            val endTime = System.currentTimeMillis() + 6000
+                socket.send(packet)
+            }
+
+            val endTime =
+                System.currentTimeMillis() + 8000
 
             while (System.currentTimeMillis() < endTime) {
                 try {
                     val buffer = ByteArray(4096)
-                    val response = DatagramPacket(buffer, buffer.size)
+                    val response = DatagramPacket(
+                        buffer,
+                        buffer.size
+                    )
 
                     socket.receive(response)
 
@@ -211,27 +213,32 @@ class MainActivity : Activity() {
                         response.length
                     )
 
-                    val location = text
-                        .lineSequence()
-                        .firstOrNull {
-                            it.startsWith("LOCATION:", true)
-                        }
-                        ?.substringAfter(":")
-                        ?.trim()
-
-                    val server = text
-                        .lineSequence()
-                        .firstOrNull {
-                            it.startsWith("SERVER:", true)
-                        }
-                        ?.substringAfter(":")
-                        ?.trim()
-
-                    if (location != null) {
-                        found.add(
-                            "الجهاز: ${server ?: "DLNA"}\nالعنوان: $location"
-                        )
+                    fun header(name: String): String? {
+                        return text.lineSequence()
+                            .firstOrNull {
+                                it.startsWith(
+                                    "$name:",
+                                    ignoreCase = true
+                                )
+                            }
+                            ?.substringAfter(":")
+                            ?.trim()
                     }
+
+                    val location = header("LOCATION")
+                    val server = header("SERVER")
+                    val st = header("ST")
+                    val usn = header("USN")
+                    val ip =
+                        response.address.hostAddress ?: "غير معروف"
+
+                    val key = location ?: usn ?: ip
+
+                    found[key] =
+                        "معلومات الجهاز: ${server ?: "DLNA / UPnP"}\n" +
+                        "عنوان الشبكة: $ip\n" +
+                        "نوع الجهاز: ${st ?: "غير محدد"}\n" +
+                        "العنوان: ${location ?: "غير متوفر"}"
 
                 } catch (_: SocketTimeoutException) {
                     // استمرار البحث
@@ -242,9 +249,12 @@ class MainActivity : Activity() {
             // فشل البحث
         } finally {
             socket?.close()
-            if (lock.isHeld) lock.release()
+
+            if (lock.isHeld) {
+                lock.release()
+            }
         }
 
-        return found.toList()
+        return found.values.toList()
     }
 }
