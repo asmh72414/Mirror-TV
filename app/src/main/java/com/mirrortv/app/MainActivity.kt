@@ -1,260 +1,189 @@
-
 package com.mirrortv.app
 
 import android.app.Activity
-import android.os.Bundle
-import android.graphics.Color
-import android.view.Gravity
-import android.widget.*
 import android.app.AlertDialog
+import android.content.Intent
+import android.media.projection.MediaProjectionManager
 import android.net.wifi.WifiManager
-import java.net.DatagramSocket
+import android.os.Bundle
+import android.view.Gravity
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
 import java.net.DatagramPacket
+import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.SocketTimeoutException
 
 class MainActivity : Activity() {
 
     private lateinit var status: TextView
-    private lateinit var results: TextView
     private lateinit var searchButton: Button
+    private lateinit var mirrorButton: Button
+    private lateinit var stopButton: Button
+    private var selectedLocation: String? = null
+    private lateinit var projectionManager: MediaProjectionManager
+
+    data class DlnaDevice(val location: String, val ip: String)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        projectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
 
-        val layout = LinearLayout(this)
-        layout.orientation = LinearLayout.VERTICAL
-        layout.gravity = Gravity.CENTER
-        layout.setPadding(28, 35, 28, 35)
-        layout.setBackgroundColor(Color.rgb(12, 35, 60))
-
-        val title = TextView(this)
-        title.text = "Mirror TV"
-        title.textSize = 34f
-        title.setTextColor(Color.WHITE)
-        title.gravity = Gravity.CENTER
-
-        val subtitle = TextView(this)
-        subtitle.text = "عكس شاشة الهاتف على التلفاز"
-        subtitle.textSize = 18f
-        subtitle.setTextColor(Color.LTGRAY)
-        subtitle.gravity = Gravity.CENTER
-
-        searchButton = Button(this)
-        searchButton.text = "البحث عن التلفاز"
-
-        val manualButton = Button(this)
-        manualButton.text = "إضافة جهاز يدوياً"
-
-        val mirrorButton = Button(this)
-        mirrorButton.text = "بدء عكس الشاشة"
-
-        status = TextView(this)
-        status.text = "اختر طريقة الاتصال بالتلفاز"
-        status.textSize = 17f
-        status.setTextColor(Color.WHITE)
-        status.gravity = Gravity.CENTER
-
-        results = TextView(this)
-        results.textSize = 15f
-        results.setTextColor(Color.WHITE)
-        results.gravity = Gravity.CENTER
-
-        val scroll = ScrollView(this)
-        scroll.addView(results)
-
-        searchButton.setOnClickListener {
-            searchButton.isEnabled = false
-            status.text = "جارٍ البحث عن أجهزة DLNA..."
-            results.text = ""
-
-            Thread {
-                val found = discoverDevices()
-
-                runOnUiThread {
-                    searchButton.isEnabled = true
-
-                    if (found.isEmpty()) {
-                        status.text = "لم يتم العثور على أجهزة DLNA"
-                    } else {
-                        status.text = "الأجهزة التي تم العثور عليها:"
-                        results.text = found.joinToString("\n\n")
-                    }
-                }
-            }.start()
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(28, 40, 28, 40)
+            setBackgroundColor(0xFF0C233C.toInt())
         }
 
-        manualButton.setOnClickListener {
-            val input = EditText(this)
-            input.hint = "مثال: 192.168.1.100"
-
-            AlertDialog.Builder(this)
-                .setTitle("إضافة جهاز يدوياً")
-                .setMessage("أدخل عنوان IP للتلفاز")
-                .setView(input)
-                .setPositiveButton("إضافة") { _, _ ->
-                    val ip = input.text.toString().trim()
-
-                    if (isValidIp(ip)) {
-                        status.text = "تمت إضافة العنوان"
-                        results.text =
-                            "عنوان الجهاز: $ip\nلم يتم الاتصال به بعد."
-                    } else {
-                        status.text = "عنوان IP غير صحيح"
-                    }
-                }
-                .setNegativeButton("إلغاء", null)
-                .show()
+        val title = TextView(this).apply {
+            text = "Mirror TV"
+            textSize = 32f
+            setTextColor(0xFFFFFFFF.toInt())
+            gravity = Gravity.CENTER
         }
 
-        mirrorButton.setOnClickListener {
-            AlertDialog.Builder(this)
-                .setTitle("عكس الشاشة")
-                .setMessage(
-                    "عكس الشاشة يحتاج إلى جهاز استقبال متوافق."
-                )
-                .setPositiveButton("حسناً", null)
-                .show()
+        status = TextView(this).apply {
+            text = "اتصل الهاتف والرسيفر بنفس شبكة Wi-Fi أو بنقطة اتصال الهاتف"
+            textSize = 16f
+            setTextColor(0xFFFFFFFF.toInt())
+            gravity = Gravity.CENTER
+        }
+
+        searchButton = Button(this).apply {
+            text = "البحث عن التلفاز"
+            setOnClickListener { searchForTv() }
+        }
+
+        mirrorButton = Button(this).apply {
+            text = "بدء عكس الشاشة"
+            isEnabled = false
+            setOnClickListener {
+                if (selectedLocation != null) {
+                    @Suppress("DEPRECATION")
+                    startActivityForResult(projectionManager.createScreenCaptureIntent(), REQUEST_CAPTURE)
+                }
+            }
+        }
+
+        stopButton = Button(this).apply {
+            text = "إيقاف عكس الشاشة"
+            setOnClickListener {
+                stopService(Intent(this@MainActivity, MirroringService::class.java))
+                status.text = "تم إيقاف العكس"
+            }
         }
 
         layout.addView(title)
-        layout.addView(subtitle)
-        addSpace(layout, 30)
-        layout.addView(searchButton)
-        layout.addView(manualButton)
-        layout.addView(mirrorButton)
-        addSpace(layout, 20)
         layout.addView(status)
-        layout.addView(scroll)
-
+        layout.addView(searchButton)
+        layout.addView(mirrorButton)
+        layout.addView(stopButton)
         setContentView(layout)
     }
 
-    private fun addSpace(layout: LinearLayout, height: Int) {
-        val space = TextView(this)
-        layout.addView(
-            space,
-            LinearLayout.LayoutParams(1, height)
-        )
+    private fun searchForTv() {
+        searchButton.isEnabled = false
+        mirrorButton.isEnabled = false
+        selectedLocation = null
+        status.text = "جارٍ البحث عن رسيفر DLNA..."
+
+        Thread {
+            val devices = discoverRenderers()
+            runOnUiThread {
+                searchButton.isEnabled = true
+                if (devices.isEmpty()) {
+                    status.text = "لم يتم العثور على رسيفر DLNA. تأكد من اتصال الجهازين بنفس الشبكة."
+                } else {
+                    val labels = devices.map { "رسيفر DLNA — ${it.ip}" }.toTypedArray()
+                    AlertDialog.Builder(this)
+                        .setTitle("اختر الرسيفر")
+                        .setItems(labels) { _, index ->
+                            selectedLocation = devices[index].location
+                            mirrorButton.isEnabled = true
+                            status.text = "تم اختيار الرسيفر: ${devices[index].ip}. اضغط بدء عكس الشاشة."
+                        }
+                        .setNegativeButton("إلغاء", null)
+                        .show()
+                }
+            }
+        }.start()
     }
 
-    private fun isValidIp(ip: String): Boolean {
-        val parts = ip.split(".")
-        if (parts.size != 4) return false
-
-        return parts.all {
-            val number = it.toIntOrNull()
-            number != null && number in 0..255
-        }
-    }
-
-    private fun discoverDevices(): List<String> {
-        val found = LinkedHashMap<String, String>()
-
-        val wifi = applicationContext
-            .getSystemService(WIFI_SERVICE) as WifiManager
-
-        val lock = wifi.createMulticastLock("MirrorTVLock")
+    private fun discoverRenderers(): List<DlnaDevice> {
+        val found = LinkedHashMap<String, DlnaDevice>()
+        val wifi = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
+        val lock = wifi.createMulticastLock("MirrorTVDiscovery")
         lock.setReferenceCounted(false)
-
         var socket: DatagramSocket? = null
 
         try {
             lock.acquire()
-
-            socket = DatagramSocket()
-            socket.soTimeout = 500
-
-            val address =
-                InetAddress.getByName("239.255.255.250")
-
+            socket = DatagramSocket().apply { soTimeout = 500 }
+            val multicast = InetAddress.getByName("239.255.255.250")
             val targets = listOf(
-                "ssdp:all",
-                "upnp:rootdevice",
-                "urn:schemas-upnp-org:device:MediaRenderer:1"
+                "urn:schemas-upnp-org:device:MediaRenderer:1",
+                "urn:schemas-upnp-org:service:AVTransport:1",
+                "upnp:rootdevice"
             )
-
             for (target in targets) {
-                val message =
-                    "M-SEARCH * HTTP/1.1\r\n" +
+                val message = "M-SEARCH * HTTP/1.1\r\n" +
                     "HOST: 239.255.255.250:1900\r\n" +
                     "MAN: \"ssdp:discover\"\r\n" +
                     "MX: 2\r\n" +
                     "ST: $target\r\n\r\n"
-
-                val data = message.toByteArray()
-
-                val packet = DatagramPacket(
-                    data,
-                    data.size,
-                    address,
-                    1900
-                )
-
-                socket.send(packet)
+                val bytes = message.toByteArray(Charsets.UTF_8)
+                socket.send(DatagramPacket(bytes, bytes.size, multicast, 1900))
             }
 
-            val endTime =
-                System.currentTimeMillis() + 8000
-
-            while (System.currentTimeMillis() < endTime) {
+            val deadline = System.currentTimeMillis() + 6000L
+            while (System.currentTimeMillis() < deadline) {
                 try {
                     val buffer = ByteArray(4096)
-                    val response = DatagramPacket(
-                        buffer,
-                        buffer.size
-                    )
-
-                    socket.receive(response)
-
-                    val text = String(
-                        response.data,
-                        0,
-                        response.length
-                    )
-
-                    fun header(name: String): String? {
-                        return text.lineSequence()
-                            .firstOrNull {
-                                it.startsWith(
-                                    "$name:",
-                                    ignoreCase = true
-                                )
-                            }
-                            ?.substringAfter(":")
-                            ?.trim()
+                    val packet = DatagramPacket(buffer, buffer.size)
+                    socket.receive(packet)
+                    val response = String(packet.data, 0, packet.length, Charsets.UTF_8)
+                    val location = response.lineSequence()
+                        .firstOrNull { it.startsWith("LOCATION:", true) }
+                        ?.substringAfter(":")?.trim()
+                    if (!location.isNullOrBlank()) {
+                        val ip = packet.address.hostAddress ?: "غير معروف"
+                        found[location] = DlnaDevice(location, ip)
                     }
-
-                    val location = header("LOCATION")
-                    val server = header("SERVER")
-                    val st = header("ST")
-                    val usn = header("USN")
-                    val ip =
-                        response.address.hostAddress ?: "غير معروف"
-
-                    val key = location ?: usn ?: ip
-
-                    found[key] =
-                        "معلومات الجهاز: ${server ?: "DLNA / UPnP"}\n" +
-                        "عنوان الشبكة: $ip\n" +
-                        "نوع الجهاز: ${st ?: "غير محدد"}\n" +
-                        "العنوان: ${location ?: "غير متوفر"}"
-
                 } catch (_: SocketTimeoutException) {
-                    // استمرار البحث
+                    // Keep listening until the discovery window ends.
                 }
             }
-
         } catch (_: Exception) {
-            // فشل البحث
+            // The UI reports that no renderer was found.
         } finally {
             socket?.close()
+            if (lock.isHeld) lock.release()
+        }
+        return found.values.toList()
+    }
 
-            if (lock.isHeld) {
-                lock.release()
+    @Deprecated("Deprecated by Android; retained for compatibility with the project's current setup")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_CAPTURE) {
+            if (resultCode == RESULT_OK && data != null && selectedLocation != null) {
+                val serviceIntent = Intent(this, MirroringService::class.java).apply {
+                    putExtra(MirroringService.EXTRA_RESULT_CODE, resultCode)
+                    putExtra(MirroringService.EXTRA_RESULT_DATA, data)
+                    putExtra(MirroringService.EXTRA_DEVICE_LOCATION, selectedLocation)
+                }
+                if (android.os.Build.VERSION.SDK_INT >= 26) startForegroundService(serviceIntent)
+                else startService(serviceIntent)
+                status.text = "جارٍ تشغيل بث الشاشة إلى الرسيفر..."
+            } else {
+                status.text = "تم إلغاء إذن التقاط الشاشة"
             }
         }
+    }
 
-        return found.values.toList()
+    companion object {
+        private const val REQUEST_CAPTURE = 501
     }
 }
