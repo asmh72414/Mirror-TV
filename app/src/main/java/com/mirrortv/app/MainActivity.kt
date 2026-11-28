@@ -1,3 +1,4 @@
+
 package com.mirrortv.app
 
 import android.app.Activity
@@ -20,15 +21,19 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var searchButton: Button
     private lateinit var mirrorButton: Button
-    private lateinit var stopButton: Button
     private var selectedLocation: String? = null
     private lateinit var projectionManager: MediaProjectionManager
 
-    data class DlnaDevice(val location: String, val ip: String)
+    data class DlnaDevice(
+        val location: String,
+        val ip: String
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        projectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+
+        projectionManager =
+            getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
 
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -45,7 +50,7 @@ class MainActivity : Activity() {
         }
 
         status = TextView(this).apply {
-            text = "اتصل الهاتف والرسيفر بنفس شبكة Wi-Fi أو بنقطة اتصال الهاتف"
+            text = "اتصل الهاتف والرسيفر بنفس شبكة Wi-Fi"
             textSize = 16f
             setTextColor(0xFFFFFFFF.toInt())
             gravity = Gravity.CENTER
@@ -62,15 +67,23 @@ class MainActivity : Activity() {
             setOnClickListener {
                 if (selectedLocation != null) {
                     @Suppress("DEPRECATION")
-                    startActivityForResult(projectionManager.createScreenCaptureIntent(), REQUEST_CAPTURE)
+                    startActivityForResult(
+                        projectionManager.createScreenCaptureIntent(),
+                        REQUEST_CAPTURE
+                    )
                 }
             }
         }
 
-        stopButton = Button(this).apply {
+        val stopButton = Button(this).apply {
             text = "إيقاف عكس الشاشة"
             setOnClickListener {
-                stopService(Intent(this@MainActivity, MirroringService::class.java))
+                val intent = Intent(
+                    this@MainActivity,
+                    MirroringService::class.java
+                )
+                intent.action = MirroringService.ACTION_STOP
+                startService(intent)
                 status.text = "تم إيقاف العكس"
             }
         }
@@ -80,6 +93,7 @@ class MainActivity : Activity() {
         layout.addView(searchButton)
         layout.addView(mirrorButton)
         layout.addView(stopButton)
+
         setContentView(layout)
     }
 
@@ -87,22 +101,28 @@ class MainActivity : Activity() {
         searchButton.isEnabled = false
         mirrorButton.isEnabled = false
         selectedLocation = null
-        status.text = "جارٍ البحث عن رسيفر DLNA..."
+        status.text = "جارٍ البحث عن الرسيفر..."
 
         Thread {
             val devices = discoverRenderers()
+
             runOnUiThread {
                 searchButton.isEnabled = true
+
                 if (devices.isEmpty()) {
-                    status.text = "لم يتم العثور على رسيفر DLNA. تأكد من اتصال الجهازين بنفس الشبكة."
+                    status.text = "لم يتم العثور على رسيفر DLNA"
                 } else {
-                    val labels = devices.map { "رسيفر DLNA — ${it.ip}" }.toTypedArray()
+                    val labels = devices.map {
+                        "رسيفر DLNA — ${it.ip}"
+                    }.toTypedArray()
+
                     AlertDialog.Builder(this)
                         .setTitle("اختر الرسيفر")
                         .setItems(labels) { _, index ->
                             selectedLocation = devices[index].location
                             mirrorButton.isEnabled = true
-                            status.text = "تم اختيار الرسيفر: ${devices[index].ip}. اضغط بدء عكس الشاشة."
+                            status.text =
+                                "تم اختيار الرسيفر: ${devices[index].ip}"
                         }
                         .setNegativeButton("إلغاء", null)
                         .show()
@@ -113,70 +133,134 @@ class MainActivity : Activity() {
 
     private fun discoverRenderers(): List<DlnaDevice> {
         val found = LinkedHashMap<String, DlnaDevice>()
-        val wifi = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
+
+        val wifi = applicationContext.getSystemService(
+            WIFI_SERVICE
+        ) as WifiManager
+
         val lock = wifi.createMulticastLock("MirrorTVDiscovery")
         lock.setReferenceCounted(false)
+
         var socket: DatagramSocket? = null
 
         try {
             lock.acquire()
-            socket = DatagramSocket().apply { soTimeout = 500 }
-            val multicast = InetAddress.getByName("239.255.255.250")
+
+            socket = DatagramSocket().apply {
+                soTimeout = 500
+            }
+
+            val multicast =
+                InetAddress.getByName("239.255.255.250")
+
             val targets = listOf(
                 "urn:schemas-upnp-org:device:MediaRenderer:1",
-                "urn:schemas-upnp-org:service:AVTransport:1",
                 "upnp:rootdevice"
             )
+
             for (target in targets) {
-                val message = "M-SEARCH * HTTP/1.1\r\n" +
+                val message =
+                    "M-SEARCH * HTTP/1.1\r\n" +
                     "HOST: 239.255.255.250:1900\r\n" +
                     "MAN: \"ssdp:discover\"\r\n" +
                     "MX: 2\r\n" +
                     "ST: $target\r\n\r\n"
-                val bytes = message.toByteArray(Charsets.UTF_8)
-                socket.send(DatagramPacket(bytes, bytes.size, multicast, 1900))
+
+                val bytes = message.toByteArray()
+
+                socket.send(
+                    DatagramPacket(
+                        bytes,
+                        bytes.size,
+                        multicast,
+                        1900
+                    )
+                )
             }
 
             val deadline = System.currentTimeMillis() + 6000L
+
             while (System.currentTimeMillis() < deadline) {
                 try {
                     val buffer = ByteArray(4096)
                     val packet = DatagramPacket(buffer, buffer.size)
+
                     socket.receive(packet)
-                    val response = String(packet.data, 0, packet.length, Charsets.UTF_8)
+
+                    val response = String(
+                        packet.data,
+                        0,
+                        packet.length
+                    )
+
                     val location = response.lineSequence()
-                        .firstOrNull { it.startsWith("LOCATION:", true) }
-                        ?.substringAfter(":")?.trim()
+                        .firstOrNull {
+                            it.startsWith("LOCATION:", true)
+                        }
+                        ?.substringAfter(":")
+                        ?.trim()
+
                     if (!location.isNullOrBlank()) {
-                        val ip = packet.address.hostAddress ?: "غير معروف"
+                        val ip =
+                            packet.address.hostAddress ?: "غير معروف"
+
                         found[location] = DlnaDevice(location, ip)
                     }
+
                 } catch (_: SocketTimeoutException) {
-                    // Keep listening until the discovery window ends.
+                    // استمرار البحث
                 }
             }
+
         } catch (_: Exception) {
-            // The UI reports that no renderer was found.
+            // فشل البحث
         } finally {
             socket?.close()
             if (lock.isHeld) lock.release()
         }
+
         return found.values.toList()
     }
 
-    @Deprecated("Deprecated by Android; retained for compatibility with the project's current setup")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+    @Deprecated("Deprecated")
+    override fun onActivityResult(
+        requestCode: Int,
+        resultCode: Int,
+        data: Intent?
+    ) {
         super.onActivityResult(requestCode, resultCode, data)
+
         if (requestCode == REQUEST_CAPTURE) {
-            if (resultCode == RESULT_OK && data != null && selectedLocation != null) {
-                val serviceIntent = Intent(this, MirroringService::class.java).apply {
-                    putExtra(MirroringService.EXTRA_RESULT_CODE, resultCode)
-                    putExtra(MirroringService.EXTRA_RESULT_DATA, data)
-                    putExtra(MirroringService.EXTRA_DEVICE_LOCATION, selectedLocation)
+            if (
+                resultCode == RESULT_OK &&
+                data != null &&
+                selectedLocation != null
+            ) {
+                val serviceIntent = Intent(
+                    this,
+                    MirroringService::class.java
+                ).apply {
+                    putExtra(
+                        MirroringService.EXTRA_RESULT_CODE,
+                        resultCode
+                    )
+                    putExtra(
+                        MirroringService.EXTRA_RESULT_DATA,
+                        data
+                    )
+                    putExtra(
+                        MirroringService.EXTRA_DEVICE_LOCATION,
+                        selectedLocation
+                    )
                 }
-                if (android.os.Build.VERSION.SDK_INT >= 26) startForegroundService(serviceIntent)
-                else startService(serviceIntent)
-                status.text = "جارٍ تشغيل بث الشاشة إلى الرسيفر..."
+
+                if (android.os.Build.VERSION.SDK_INT >= 26) {
+                    startForegroundService(serviceIntent)
+                } else {
+                    startService(serviceIntent)
+                }
+
+                status.text = "جارٍ تشغيل عكس الشاشة..."
             } else {
                 status.text = "تم إلغاء إذن التقاط الشاشة"
             }
