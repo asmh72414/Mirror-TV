@@ -19,21 +19,25 @@ import java.net.SocketTimeoutException
 class MainActivity : Activity() {
 
     private lateinit var status: TextView
-    private lateinit var searchButton: Button
     private lateinit var mirrorButton: Button
-    private var selectedLocation: String? = null
     private lateinit var projectionManager: MediaProjectionManager
+    private var selectedLocation: String? = null
 
-    data class DlnaDevice(
+    data class Device(
         val location: String,
         val ip: String
     )
 
+    companion object {
+        private const val REQUEST_CAPTURE = 501
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        projectionManager =
-            getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        projectionManager = getSystemService(
+            MEDIA_PROJECTION_SERVICE
+        ) as MediaProjectionManager
 
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -44,101 +48,75 @@ class MainActivity : Activity() {
 
         val title = TextView(this).apply {
             text = "Mirror TV"
-            textSize = 32f
-            setTextColor(0xFFFFFFFF.toInt())
+            textSize = 34f
             gravity = Gravity.CENTER
+            setTextColor(0xFFFFFFFF.toInt())
         }
 
         status = TextView(this).apply {
-            text = "اتصل الهاتف والرسيفر بنفس شبكة Wi-Fi"
-            textSize = 16f
-            setTextColor(0xFFFFFFFF.toInt())
+            text = "جاهز لعكس الشاشة"
+            textSize = 17f
             gravity = Gravity.CENTER
-        }
-
-        searchButton = Button(this).apply {
-            text = "البحث عن التلفاز"
-            setOnClickListener { searchForTv() }
+            setTextColor(0xFFFFFFFF.toInt())
         }
 
         mirrorButton = Button(this).apply {
-            text = "بدء عكس الشاشة"
-            isEnabled = false
+            text = "اعكس الشاشة"
             setOnClickListener {
-                if (selectedLocation != null) {
-                    @Suppress("DEPRECATION")
-                    startActivityForResult(
-                        projectionManager.createScreenCaptureIntent(),
-                        REQUEST_CAPTURE
-                    )
-                }
-            }
-        }
-
-        val stopButton = Button(this).apply {
-            text = "إيقاف عكس الشاشة"
-            setOnClickListener {
-                val intent = Intent(
-                    this@MainActivity,
-                    MirroringService::class.java
-                )
-                intent.action = MirroringService.ACTION_STOP
-                startService(intent)
-                status.text = "تم إيقاف العكس"
+                findDevices()
             }
         }
 
         layout.addView(title)
         layout.addView(status)
-        layout.addView(searchButton)
         layout.addView(mirrorButton)
-        layout.addView(stopButton)
 
         setContentView(layout)
     }
 
-    private fun searchForTv() {
-        searchButton.isEnabled = false
+    private fun findDevices() {
         mirrorButton.isEnabled = false
-        selectedLocation = null
         status.text = "جارٍ البحث عن الرسيفر..."
 
         Thread {
-            val devices = discoverRenderers()
+            val devices = discoverDevices()
 
             runOnUiThread {
-                searchButton.isEnabled = true
+                mirrorButton.isEnabled = true
 
                 if (devices.isEmpty()) {
-                    status.text = "لم يتم العثور على رسيفر DLNA"
-                } else {
-                    val labels = devices.map {
-                        "رسيفر DLNA — ${it.ip}"
-                    }.toTypedArray()
-
-                    AlertDialog.Builder(this)
-                        .setTitle("اختر الرسيفر")
-                        .setItems(labels) { _, index ->
-                            selectedLocation = devices[index].location
-                            mirrorButton.isEnabled = true
-                            status.text =
-                                "تم اختيار الرسيفر: ${devices[index].ip}"
-                        }
-                        .setNegativeButton("إلغاء", null)
-                        .show()
+                    status.text = "لم يتم العثور على رسيفر"
+                    return@runOnUiThread
                 }
+
+                val names = devices.map {
+                    it.ip
+                }.toTypedArray()
+
+                status.text = "اختر الرسيفر"
+
+                AlertDialog.Builder(this)
+                    .setTitle("الأجهزة المتاحة")
+                    .setItems(names) { _, index ->
+                        selectedLocation =
+                            devices[index].location
+
+                        requestCapture()
+                    }
+                    .setNegativeButton("إلغاء", null)
+                    .show()
             }
         }.start()
     }
 
-    private fun discoverRenderers(): List<DlnaDevice> {
-        val found = LinkedHashMap<String, DlnaDevice>()
+    private fun discoverDevices(): List<Device> {
+        val found = LinkedHashMap<String, Device>()
 
         val wifi = applicationContext.getSystemService(
             WIFI_SERVICE
         ) as WifiManager
 
-        val lock = wifi.createMulticastLock("MirrorTVDiscovery")
+        val lock = wifi.createMulticastLock("MirrorTV")
         lock.setReferenceCounted(false)
 
         var socket: DatagramSocket? = null
@@ -146,44 +124,38 @@ class MainActivity : Activity() {
         try {
             lock.acquire()
 
-            socket = DatagramSocket().apply {
-                soTimeout = 500
-            }
+            socket = DatagramSocket()
+            socket.soTimeout = 500
 
-            val multicast =
+            val address =
                 InetAddress.getByName("239.255.255.250")
 
-            val targets = listOf(
-                "urn:schemas-upnp-org:device:MediaRenderer:1",
-                "upnp:rootdevice"
+            val message =
+                "M-SEARCH * HTTP/1.1\r\n" +
+                "HOST: 239.255.255.250:1900\r\n" +
+                "MAN: \"ssdp:discover\"\r\n" +
+                "MX: 2\r\n" +
+                "ST: urn:schemas-upnp-org:device:MediaRenderer:1\r\n\r\n"
+
+            val bytes = message.toByteArray()
+
+            socket.send(
+                DatagramPacket(
+                    bytes,
+                    bytes.size,
+                    address,
+                    1900
+                )
             )
 
-            for (target in targets) {
-                val message =
-                    "M-SEARCH * HTTP/1.1\r\n" +
-                    "HOST: 239.255.255.250:1900\r\n" +
-                    "MAN: \"ssdp:discover\"\r\n" +
-                    "MX: 2\r\n" +
-                    "ST: $target\r\n\r\n"
-
-                val bytes = message.toByteArray()
-
-                socket.send(
-                    DatagramPacket(
-                        bytes,
-                        bytes.size,
-                        multicast,
-                        1900
-                    )
-                )
-            }
-
-            val deadline = System.currentTimeMillis() + 6000L
+            val deadline =
+                System.currentTimeMillis() + 7000
 
             while (System.currentTimeMillis() < deadline) {
                 try {
                     val buffer = ByteArray(4096)
-                    val packet = DatagramPacket(buffer, buffer.size)
+                    val packet =
+                        DatagramPacket(buffer, buffer.size)
 
                     socket.receive(packet)
 
@@ -193,7 +165,8 @@ class MainActivity : Activity() {
                         packet.length
                     )
 
-                    val location = response.lineSequence()
+                    val location = response
+                        .lineSequence()
                         .firstOrNull {
                             it.startsWith("LOCATION:", true)
                         }
@@ -202,24 +175,35 @@ class MainActivity : Activity() {
 
                     if (!location.isNullOrBlank()) {
                         val ip =
-                            packet.address.hostAddress ?: "غير معروف"
+                            packet.address.hostAddress
+                                ?: "Unknown"
 
-                        found[location] = DlnaDevice(location, ip)
+                        found[location] = Device(location, ip)
                     }
 
                 } catch (_: SocketTimeoutException) {
-                    // استمرار البحث
+                    // Continue searching
                 }
             }
 
         } catch (_: Exception) {
-            // فشل البحث
+            // Search failed
         } finally {
             socket?.close()
             if (lock.isHeld) lock.release()
         }
 
         return found.values.toList()
+    }
+
+    private fun requestCapture() {
+        if (selectedLocation == null) return
+
+        @Suppress("DEPRECATION")
+        startActivityForResult(
+            projectionManager.createScreenCaptureIntent(),
+            REQUEST_CAPTURE
+        )
     }
 
     @Deprecated("Deprecated")
@@ -230,44 +214,37 @@ class MainActivity : Activity() {
     ) {
         super.onActivityResult(requestCode, resultCode, data)
 
-        if (requestCode == REQUEST_CAPTURE) {
-            if (
-                resultCode == RESULT_OK &&
-                data != null &&
-                selectedLocation != null
-            ) {
-                val serviceIntent = Intent(
-                    this,
-                    MirroringService::class.java
-                ).apply {
-                    putExtra(
-                        MirroringService.EXTRA_RESULT_CODE,
-                        resultCode
-                    )
-                    putExtra(
-                        MirroringService.EXTRA_RESULT_DATA,
-                        data
-                    )
-                    putExtra(
-                        MirroringService.EXTRA_DEVICE_LOCATION,
-                        selectedLocation
-                    )
-                }
+        if (requestCode != REQUEST_CAPTURE) return
 
-                if (android.os.Build.VERSION.SDK_INT >= 26) {
-                    startForegroundService(serviceIntent)
-                } else {
-                    startService(serviceIntent)
-                }
-
-                status.text = "جارٍ تشغيل عكس الشاشة..."
-            } else {
-                status.text = "تم إلغاء إذن التقاط الشاشة"
-            }
+        if (resultCode != RESULT_OK || data == null) {
+            status.text = "تم إلغاء مشاركة الشاشة"
+            return
         }
-    }
 
-    companion object {
-        private const val REQUEST_CAPTURE = 501
+        val serviceIntent = Intent(
+            this,
+            MirroringService::class.java
+        ).apply {
+            putExtra(
+                MirroringService.EXTRA_RESULT_CODE,
+                resultCode
+            )
+            putExtra(
+                MirroringService.EXTRA_RESULT_DATA,
+                data
+            )
+            putExtra(
+                MirroringService.EXTRA_DEVICE_LOCATION,
+                selectedLocation
+            )
+        }
+
+        if (android.os.Build.VERSION.SDK_INT >= 26) {
+            startForegroundService(serviceIntent)
+        } else {
+            startService(serviceIntent)
+        }
+
+        status.text = "جارٍ بدء عكس الشاشة..."
     }
 }
