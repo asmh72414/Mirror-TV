@@ -54,7 +54,7 @@ class MainActivity : Activity() {
         }
 
         status = TextView(this).apply {
-            text = "جاهز لعكس الشاشة"
+            text = "اضغط اعكس الشاشة للبحث عن الرسيفر"
             textSize = 17f
             gravity = Gravity.CENTER
             setTextColor(0xFFFFFFFF.toInt())
@@ -62,9 +62,7 @@ class MainActivity : Activity() {
 
         mirrorButton = Button(this).apply {
             text = "اعكس الشاشة"
-            setOnClickListener {
-                findDevices()
-            }
+            setOnClickListener { findDevices() }
         }
 
         layout.addView(title)
@@ -76,7 +74,7 @@ class MainActivity : Activity() {
 
     private fun findDevices() {
         mirrorButton.isEnabled = false
-        status.text = "جارٍ البحث عن الرسيفر..."
+        status.text = "جارٍ البحث..."
 
         Thread {
             val devices = discoverDevices()
@@ -89,18 +87,12 @@ class MainActivity : Activity() {
                     return@runOnUiThread
                 }
 
-                val names = devices.map {
-                    it.ip
-                }.toTypedArray()
-
-                status.text = "اختر الرسيفر"
+                val labels = devices.map { it.ip }.toTypedArray()
 
                 AlertDialog.Builder(this)
-                    .setTitle("الأجهزة المتاحة")
-                    .setItems(names) { _, index ->
-                        selectedLocation =
-                            devices[index].location
-
+                    .setTitle("اختر الرسيفر")
+                    .setItems(labels) { _, index ->
+                        selectedLocation = devices[index].location
                         requestCapture()
                     }
                     .setNegativeButton("إلغاء", null)
@@ -116,80 +108,82 @@ class MainActivity : Activity() {
             WIFI_SERVICE
         ) as WifiManager
 
-        val lock = wifi.createMulticastLock("MirrorTV")
+        val lock = wifi.createMulticastLock("MirrorTVLock")
         lock.setReferenceCounted(false)
-
-        var socket: DatagramSocket? = null
 
         try {
             lock.acquire()
 
-            socket = DatagramSocket()
-            socket.soTimeout = 500
+            DatagramSocket().use { socket ->
+                socket.soTimeout = 500
 
-            val address =
-                InetAddress.getByName("239.255.255.250")
-
-            val message =
-                "M-SEARCH * HTTP/1.1\r\n" +
-                "HOST: 239.255.255.250:1900\r\n" +
-                "MAN: \"ssdp:discover\"\r\n" +
-                "MX: 2\r\n" +
-                "ST: urn:schemas-upnp-org:device:MediaRenderer:1\r\n\r\n"
-
-            val bytes = message.toByteArray()
-
-            socket.send(
-                DatagramPacket(
-                    bytes,
-                    bytes.size,
-                    address,
-                    1900
+                val address = InetAddress.getByName(
+                    "239.255.255.250"
                 )
-            )
 
-            val deadline =
-                System.currentTimeMillis() + 7000
+                val message =
+                    "M-SEARCH * HTTP/1.1\r\n" +
+                    "HOST: 239.255.255.250:1900\r\n" +
+                    "MAN: \"ssdp:discover\"\r\n" +
+                    "MX: 2\r\n" +
+                    "ST: urn:schemas-upnp-org:device:MediaRenderer:1\r\n\r\n"
 
-            while (System.currentTimeMillis() < deadline) {
-                try {
-                    val buffer = ByteArray(4096)
-                    val packet =
-                        DatagramPacket(buffer, buffer.size)
+                val bytes = message.toByteArray()
 
-                    socket.receive(packet)
-
-                    val response = String(
-                        packet.data,
-                        0,
-                        packet.length
+                socket.send(
+                    DatagramPacket(
+                        bytes,
+                        bytes.size,
+                        address,
+                        1900
                     )
+                )
 
-                    val location = response
-                        .lineSequence()
-                        .firstOrNull {
-                            it.startsWith("LOCATION:", true)
-                        }
-                        ?.substringAfter(":")
-                        ?.trim()
+                val deadline =
+                    System.currentTimeMillis() + 7000L
 
-                    if (!location.isNullOrBlank()) {
-                        val ip =
-                            packet.address.hostAddress
+                while (System.currentTimeMillis() < deadline) {
+                    try {
+                        val buffer = ByteArray(4096)
+                        val packet = DatagramPacket(
+                            buffer,
+                            buffer.size
+                        )
+
+                        socket.receive(packet)
+
+                        val response = String(
+                            packet.data,
+                            0,
+                            packet.length
+                        )
+
+                        val location = response
+                            .lineSequence()
+                            .firstOrNull {
+                                it.startsWith(
+                                    "LOCATION:",
+                                    ignoreCase = true
+                                )
+                            }
+                            ?.substringAfter(":")
+                            ?.trim()
+
+                        if (!location.isNullOrBlank()) {
+                            val ip = packet.address.hostAddress
                                 ?: "Unknown"
 
-                        found[location] = Device(location, ip)
-                    }
+                            found[location] = Device(location, ip)
+                        }
 
-                } catch (_: SocketTimeoutException) {
-                    // Continue searching
+                    } catch (_: SocketTimeoutException) {
+                        // Continue searching
+                    }
                 }
             }
-
         } catch (_: Exception) {
             // Search failed
         } finally {
-            socket?.close()
             if (lock.isHeld) lock.release()
         }
 
